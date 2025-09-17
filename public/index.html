@@ -26,6 +26,10 @@
             });
             const responseJson = await resp.json();
             const { client_secret } = responseJson;
+            if(!client_secret){
+                alert('failed to load client_sec')
+                return
+            }
             // 2. Init Airwallex
             Airwallex.init({
                 env: "demo", // change to "prod" when going live
