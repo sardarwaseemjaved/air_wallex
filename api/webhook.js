@@ -1,44 +1,42 @@
-// pages/api/webhook.js (Vercel)
-import crypto from "crypto";
-
 export const config = {
   api: {
-    bodyParser: false, // Important: raw body needed for signature verification
+    bodyParser: false, // Required for raw signature verification
   },
 };
 
+import getRawBody from "raw-body";
+import crypto from "crypto";
+
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).end();
-
-  const rawBody = await new Promise((resolve) => {
-    let data = "";
-    req.on("data", (chunk) => (data += chunk));
-    req.on("end", () => resolve(data));
-  });
-
-  const timestamp = req.headers["x-timestamp"];
-  const signature = req.headers["x-signature"];
-
-  const hmac = crypto.createHmac("sha256", process.env.AIRWALLEX_API_KEY);
-  hmac.update(timestamp + rawBody);
-  const expectedSig = hmac.digest("hex");
-
-  if (expectedSig !== signature) {
-    console.error("Invalid signature");
-    return res.status(400).send("Invalid signature");
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const event = JSON.parse(rawBody);
-  console.log("Webhook received:", event.type, event.data);
+  try {
+    const rawBody = await getRawBody(req);
+    const signature = req.headers["x-airwallex-signature"];
+    const secret = process.env.AIRWALLEX_WEBHOOK_SECRET;
 
-  if (event.type === "webhook.verification") {
-    console.log("Webhook verified with code:", event.data.verification_code);
+    // ✅ Verify signature (based on Airwallex docs)
+    const hmac = crypto.createHmac("sha256", secret);
+    hmac.update(rawBody);
+    const expectedSignature = hmac.digest("hex");
+
+    if (signature !== expectedSignature) {
+      return res.status(401).json({ error: "Invalid signature" });
+    }
+
+    const event = JSON.parse(rawBody.toString());
+    console.log("🔔 Received webhook:", event);
+
+    // TODO: handle specific event types (e.g. payment_intent.succeeded)
+    if (event.type === "payment_intent.succeeded") {
+      console.log("✅ Payment succeeded:", event.data);
+    }
+
+    return res.status(200).json({ received: true });
+  } catch (error) {
+    console.error("❌ Webhook error:", error);
+    return res.status(500).json({ error: error.message });
   }
-
-  if (event.type === "payment_intent.succeeded") {
-    console.log("Payment succeeded for:", event.data.id);
-    // TODO: update your DB
-  }
-
-  return res.status(200).send("ok");
 }
