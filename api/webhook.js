@@ -1,54 +1,44 @@
+// pages/api/webhook.js (Vercel)
 import crypto from "crypto";
 
-const WEBHOOK_SECRET = process.env.AIRWALLEX_WEBHOOK_SECRET;
-
-/**
- * Read the raw body as Buffer (required to verify signatures)
- */
-async function getRawBody(req) {
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  return Buffer.concat(chunks);
-}
+export const config = {
+  api: {
+    bodyParser: false, // Important: raw body needed for signature verification
+  },
+};
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  try {
-    const raw = await getRawBody(req);
-    const ts = req.headers["x-timestamp"] || req.headers["x-timestamp".toLowerCase()];
-    const signature = req.headers["x-signature"] || req.headers["x-signature".toLowerCase()];
+  const rawBody = await new Promise((resolve) => {
+    let data = "";
+    req.on("data", (chunk) => (data += chunk));
+    req.on("end", () => resolve(data));
+  });
 
-    if (!ts || !signature || !WEBHOOK_SECRET) {
-      console.warn("Missing ts/signature/secret");
-      return res.status(400).end("missing headers or secret");
-    }
+  const timestamp = req.headers["x-timestamp"];
+  const signature = req.headers["x-signature"];
 
-    // expected = HMAC_SHA256( timestamp + rawBody ) using endpoint secret (hex)
-    const expected = crypto.createHmac("sha256", WEBHOOK_SECRET).update(ts + raw.toString()).digest("hex");
+  const hmac = crypto.createHmac("sha256", process.env.AIRWALLEX_API_KEY);
+  hmac.update(timestamp + rawBody);
+  const expectedSig = hmac.digest("hex");
 
-    // timing-safe compare
-    const sigBuf = Buffer.from(signature, "hex");
-    const expBuf = Buffer.from(expected, "hex");
-    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
-      console.warn("Invalid webhook signature", { signature, expected });
-      return res.status(400).end("invalid signature");
-    }
-
-    const event = JSON.parse(raw.toString());
-    console.log("received webhook:", event.type || event.event || "unknown", event);
-
-    // acknowledge early
-    res.status(200).end("ok");
-
-    // then do your async business logic (DB update, fulfillment). Example:
-    if (event.type === "payment_intent.succeeded" || event.event === "payment_intent.succeeded") {
-      const pi = event.data || event.data_object || event;
-      // TODO: mark order as paid in DB
-      console.log("payment succeeded for:", pi.id || pi.payment_intent_id);
-    }
-  } catch (err) {
-    console.error("webhook handler error:", err);
-    return res.status(500).end("error");
+  if (expectedSig !== signature) {
+    console.error("Invalid signature");
+    return res.status(400).send("Invalid signature");
   }
+
+  const event = JSON.parse(rawBody);
+  console.log("Webhook received:", event.type, event.data);
+
+  if (event.type === "webhook.verification") {
+    console.log("Webhook verified with code:", event.data.verification_code);
+  }
+
+  if (event.type === "payment_intent.succeeded") {
+    console.log("Payment succeeded for:", event.data.id);
+    // TODO: update your DB
+  }
+
+  return res.status(200).send("ok");
 }
