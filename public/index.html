@@ -1,51 +1,86 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
+
+<head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Airwallex Hosted Checkout</title>
+    <title>Airwallex Registered Checkout</title>
     <script src="https://checkout.airwallex.com/assets/elements.bundle.min.js"></script>
-  </head>
-  <body>
-    <h1>Airwallex Hosted Checkout Demo</h1>
-    <button id="checkout-btn">Pay $19.99</button>
+</head>
 
-    <script type="module">
-      import { init } from "https://checkout.airwallex.com/assets/elements.es.min.js";
+<body>
+    <h1>Airwallex Registered User Checkout</h1>
 
-      const backendBaseUrl = "air-wallex.vercel.app";
+    <button id="save-only-btn">💳 Save Card Only</button>
+    <button id="pay-and-save-btn">💳 Pay & Save Card</button>
 
-      document.getElementById("checkout-btn").addEventListener("click", async () => {
-        try {
-          // 1. Call backend to create PaymentIntent
-          const res = await fetch(`${backendBaseUrl}/api/create-payment-intent`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ amount: 1999, currency: "USD" }),
-          });
+    <script>
+        const backendBaseUrl = "https://air-wallex.vercel.app"; // your backend
+        const customerId = "cus_123456789"; // should come from your logged-in user
 
-          const { intent_id, client_secret } = await res.json();
+        async function saveOnly() {
+            // 1. Request customer client_secret from backend
+            const resp = await fetch(`${backendBaseUrl}/api/generate-customer-client-secret`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ customer_id: customerId })
+            });
+            const { client_secret } = await resp.json();
 
-          // 2. Init Airwallex
-          const { payments } = await init({
-            env: "demo", // use "prod" for live
-            enabledElements: ["payments"],
-          });
+            // 2. Init Airwallex
+            Airwallex.init({
+                env: "demo", // or "prod"
+            });
 
-          // 3. Redirect to Hosted Payment Page
-          await payments.redirectToCheckout({
-            intent_id,
-            client_secret,
-            currency: "USD",
-            country_code: "US",
-            successUrl: `${backendBaseUrl}/success.html`,
-            failUrl: `${backendBaseUrl}/fail.html`,
-          });
-        } catch (err) {
-          console.error("Checkout error:", err);
-          alert("Something went wrong. Please try again.");
+            // 3. Redirect to Hosted Payment Page to create PaymentConsent
+            Airwallex.redirectToCheckout({
+                client_secret,
+                customer_id: customerId,
+                mode: "recurring",
+                recurringOptions: {
+                    next_triggered_by: "merchant",
+                    currency: "USD",
+                },
+                successUrl: `${backendBaseUrl}/success.html`,
+                failUrl: `${backendBaseUrl}/fail.html`,
+            });
         }
-      });
+
+        async function payAndSave() {
+            // 1. Create PaymentIntent on backend
+            const resp = await fetch(`${backendBaseUrl}/api/create-payment-intent`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    amount: 2999,
+                    currency: "USD",
+                    customer_id: customerId
+                })
+            });
+            const { intent_id, client_secret } = await resp.json();
+
+            // 2. Init Airwallex
+            Airwallex.init({
+                env: "demo",
+            });
+
+            // 3. Redirect to Hosted Payment Page with PaymentIntent + recurring options
+            Airwallex.redirectToCheckout({
+                intent_id,
+                client_secret,
+                customer_id: customerId,
+                mode: "recurring",
+                recurringOptions: {
+                    next_triggered_by: "customer",
+                    currency: "USD",
+                },
+                successUrl: `${backendBaseUrl}/success.html`,
+                failUrl: `${backendBaseUrl}/fail.html`,
+            });
+        }
+
+        document.getElementById("save-only-btn").addEventListener("click", saveOnly);
+        document.getElementById("pay-and-save-btn").addEventListener("click", payAndSave);
     </script>
-  </body>
+</body>
+
 </html>
