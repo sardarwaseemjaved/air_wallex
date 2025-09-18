@@ -8,79 +8,94 @@
   <h1>Airwallex Checkout Demo</h1>
 
   <h2>Create New Customer</h2>
-  <input type="email" id="email" placeholder="Enter email" />
-  <button id="createCustomerBtn">Create Customer</button>
+  <input type="text" id="merchantCustomerId" placeholder="Merchant Customer ID" />
+  <input type="email" id="email" placeholder="Enter Email" />
+  <button id="createCustomerBtn">Create Customer & Pay</button>
   <p id="customerResult"></p>
 
   <h2>Use Existing Customer</h2>
-  <input type="text" id="customerId" placeholder="Enter Customer ID" />
-  <button id="existingCustomerBtn">Generate Client Secret & Pay</button>
+  <input type="text" id="existingCustomerId" placeholder="Existing Customer ID" />
+  <button id="existingCustomerBtn">Pay with Existing Customer</button>
   <p id="clientSecretResult"></p>
 
   <script>
-    const createCustomerBtn = document.getElementById("createCustomerBtn");
-    const existingCustomerBtn = document.getElementById("existingCustomerBtn");
+    async function generateClientSecret(customerId) {
+      const res = await fetch(`/api/generate-client-secret?customerId=${customerId}`);
+      return res.json();
+    }
 
-    createCustomerBtn.addEventListener("click", async () => {
+    async function createPaymentIntent(customerId, clientSecret) {
+      const res = await fetch("/api/create-payment-intent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: 100, // example: $1.00 in minor units
+          currency: "USD",
+          customer_id: customerId,
+          client_secret: clientSecret
+        })
+      });
+      return res.json();
+    }
+
+    document.getElementById("createCustomerBtn").addEventListener("click", async () => {
+      const merchantCustomerId = document.getElementById("merchantCustomerId").value;
       const email = document.getElementById("email").value;
-      if (!email) return alert("Please enter an email");
+
+      if (!merchantCustomerId || !email) return alert("Enter Merchant Customer ID and Email");
 
       try {
-        const res = await fetch("/api/create-customer", {
+        // Step 1: Create customer
+        const createRes = await fetch("/api/create-customer", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email })
+          body: JSON.stringify({ 
+            merchant_customer_id: merchantCustomerId,
+            email 
+          })
         });
-        const data = await res.json();
-        if (data.id) {
-          document.getElementById("customerResult").innerText =
-            "Customer created: " + data.id;
-          document.getElementById("customerId").value = data.id;
+        const customer = await createRes.json();
+
+        if (!customer.id) return alert("Failed to create customer");
+        document.getElementById("customerResult").innerText = "Customer created: " + customer.id;
+
+        // Step 2: Generate client secret
+        const secretData = await generateClientSecret(customer.id);
+        if (!secretData.client_secret) return alert("Failed to generate client secret");
+
+        // Step 3: Create payment intent
+        const intentData = await createPaymentIntent(customer.id, secretData.client_secret);
+        if (intentData.next_action?.redirect_url) {
+          window.location.href = intentData.next_action.redirect_url;
         } else {
-          alert("Failed to create customer");
+          alert("Failed to create payment intent");
         }
+
       } catch (err) {
         console.error(err);
-        alert("Error creating customer");
+        alert("Error in new customer flow");
       }
     });
 
-    existingCustomerBtn.addEventListener("click", async () => {
-      const customerId = document.getElementById("customerId").value;
-      if (!customerId) return alert("Enter a customer ID first");
+    document.getElementById("existingCustomerBtn").addEventListener("click", async () => {
+      const customerId = document.getElementById("existingCustomerId").value;
+      if (!customerId) return alert("Enter a customer ID");
 
       try {
         // Step 1: Generate client secret
-        const secretRes = await fetch(`/api/generate-client-secret?customerId=${customerId}`);
-        const secretData = await secretRes.json();
-
-        if (!secretData.client_secret) {
-          return alert("Failed to generate client secret");
-        }
-        document.getElementById("clientSecretResult").innerText =
-          "Client secret generated";
+        const secretData = await generateClientSecret(customerId);
+        if (!secretData.client_secret) return alert("Failed to generate client secret");
 
         // Step 2: Create payment intent
-        const intentRes = await fetch("/api/create-payment-intent", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            amount: 100, // Example amount in minor units
-            currency: "USD",
-            customer_id: customerId,
-            client_secret: secretData.client_secret
-          })
-        });
-        const intentData = await intentRes.json();
-
-        if (intentData.next_action && intentData.next_action.redirect_url) {
+        const intentData = await createPaymentIntent(customerId, secretData.client_secret);
+        if (intentData.next_action?.redirect_url) {
           window.location.href = intentData.next_action.redirect_url;
         } else {
           alert("Failed to create payment intent");
         }
       } catch (err) {
         console.error(err);
-        alert("Error processing payment");
+        alert("Error in existing customer flow");
       }
     });
   </script>
