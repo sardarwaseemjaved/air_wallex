@@ -1,125 +1,88 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8" />
-  <title>Airwallex Registered Checkout</title>
-  <script src="https://checkout.airwallex.com/assets/elements.bundle.min.js"></script>
+  <title>Airwallex Checkout Demo</title>
 </head>
-
 <body>
-  <h1>Airwallex Registered User Checkout</h1>
+  <h1>Airwallex Checkout Demo</h1>
 
-  <h2>New Customer Flow</h2>
-  <button id="new-save-only-btn">💳 Save Card Only (New)</button>
-  <button id="new-pay-and-save-btn">💳 Pay & Save Card (New)</button>
+  <h2>Create New Customer</h2>
+  <input type="email" id="email" placeholder="Enter email" />
+  <button id="createCustomerBtn">Create Customer</button>
+  <p id="customerResult"></p>
 
-  <h2>Existing Customer Flow</h2>
-  <button id="existing-save-only-btn">💳 Save Card Only (Existing)</button>
-  <button id="existing-pay-and-save-btn">💳 Pay & Save Card (Existing)</button>
+  <h2>Use Existing Customer</h2>
+  <input type="text" id="customerId" placeholder="Enter Customer ID" />
+  <button id="existingCustomerBtn">Generate Client Secret & Pay</button>
+  <p id="clientSecretResult"></p>
 
   <script>
-    const backendBaseUrl = "https://air-wallex.vercel.app"; // your backend
-    const existingCustomerId = "cus_123456789"; // replace with your real stored customer_id
+    const createCustomerBtn = document.getElementById("createCustomerBtn");
+    const existingCustomerBtn = document.getElementById("existingCustomerBtn");
 
-    // -------------------------
-    // Helper: Create a new customer
-    async function createCustomer() {
-      const resp = await fetch(`${backendBaseUrl}/api/create-customer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ merchant_customer_id: `user_${Date.now()}` })
-      });
-      const customer = await resp.json();
-      console.log("Created customer:", customer);
-      return customer.id; // Airwallex customer_id
-    }
+    createCustomerBtn.addEventListener("click", async () => {
+      const email = document.getElementById("email").value;
+      if (!email) return alert("Please enter an email");
 
-    // -------------------------
-    // Helper: Get client secret
-    async function getClientSecret(customerId) {
-      const resp = await fetch(`${backendBaseUrl}/api/generate-customer-client-secret`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customer_id: customerId })
-      });
-      const { client_secret } = await resp.json();
-      return client_secret;
-    }
-
-    // -------------------------
-    // Save card only flow
-    async function saveOnly(customerId) {
-      const client_secret = await getClientSecret(customerId);
-
-      Airwallex.init({ env: "demo" });
-
-      Airwallex.redirectToCheckout({
-        client_secret,
-        customer_id: customerId,
-        mode: "recurring",
-        recurringOptions: {
-          next_triggered_by: "merchant",
-          currency: "USD",
-        },
-        successUrl: `${backendBaseUrl}/success.html`,
-        failUrl: `${backendBaseUrl}/fail.html`,
-      });
-    }
-
-    // -------------------------
-    // Pay and save card flow
-    async function payAndSave(customerId) {
-      const resp = await fetch(`${backendBaseUrl}/api/create-payment-intent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: 2999,
-          currency: "USD",
-          customer_id: customerId
-        })
-      });
-      const { intent_id, client_secret } = await resp.json();
-
-      Airwallex.init({ env: "demo" });
-
-      Airwallex.redirectToCheckout({
-        intent_id,
-        client_secret,
-        customer_id: customerId,
-        mode: "recurring",
-        recurringOptions: {
-          next_triggered_by: "customer",
-          currency: "USD",
-        },
-        successUrl: `${backendBaseUrl}/success.html`,
-        failUrl: `${backendBaseUrl}/fail.html`,
-      });
-    }
-
-    // -------------------------
-    // Button bindings
-
-    // New customer flow
-    document.getElementById("new-save-only-btn").addEventListener("click", async () => {
-      const customerId = await createCustomer();
-      await saveOnly(customerId);
+      try {
+        const res = await fetch("/api/create-customer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email })
+        });
+        const data = await res.json();
+        if (data.id) {
+          document.getElementById("customerResult").innerText =
+            "Customer created: " + data.id;
+          document.getElementById("customerId").value = data.id;
+        } else {
+          alert("Failed to create customer");
+        }
+      } catch (err) {
+        console.error(err);
+        alert("Error creating customer");
+      }
     });
 
-    document.getElementById("new-pay-and-save-btn").addEventListener("click", async () => {
-      const customerId = await createCustomer();
-      await payAndSave(customerId);
-    });
+    existingCustomerBtn.addEventListener("click", async () => {
+      const customerId = document.getElementById("customerId").value;
+      if (!customerId) return alert("Enter a customer ID first");
 
-    // Existing customer flow
-    document.getElementById("existing-save-only-btn").addEventListener("click", async () => {
-      await saveOnly(existingCustomerId);
-    });
+      try {
+        // Step 1: Generate client secret
+        const secretRes = await fetch(`/api/generate-client-secret?customerId=${customerId}`);
+        const secretData = await secretRes.json();
 
-    document.getElementById("existing-pay-and-save-btn").addEventListener("click", async () => {
-      await payAndSave(existingCustomerId);
+        if (!secretData.client_secret) {
+          return alert("Failed to generate client secret");
+        }
+        document.getElementById("clientSecretResult").innerText =
+          "Client secret generated";
+
+        // Step 2: Create payment intent
+        const intentRes = await fetch("/api/create-payment-intent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: 100, // Example amount in minor units
+            currency: "USD",
+            customer_id: customerId,
+            client_secret: secretData.client_secret
+          })
+        });
+        const intentData = await intentRes.json();
+
+        if (intentData.next_action && intentData.next_action.redirect_url) {
+          window.location.href = intentData.next_action.redirect_url;
+        } else {
+          alert("Failed to create payment intent");
+        }
+      } catch (err) {
+        console.error(err);
+        alert("Error processing payment");
+      }
     });
   </script>
 </body>
-
 </html>

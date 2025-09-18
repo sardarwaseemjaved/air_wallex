@@ -1,13 +1,11 @@
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
     const { amount, currency, customer_id } = req.body;
-    console.log("[create-payment-intent] Request body:", req.body);
+    if (!amount || !currency || !customer_id) return res.status(400).json({ error: "amount, currency, and customer_id are required" });
 
-    const response = await fetch("https://api-demo.airwallex.com/api/v1/authentication/login", {
+    const loginResp = await fetch("https://api-demo.airwallex.com/api/v1/authentication/login", {
       method: "POST",
       headers: {
         "x-client-id": process.env.AIRWALLEX_CLIENT_ID,
@@ -15,14 +13,15 @@ export default async function handler(req, res) {
         "Content-Type": "application/json",
       },
     });
+    const loginJson = await loginResp.json();
+    if (!loginResp.ok) return res.status(loginResp.status).json({ error: "Authentication failed", details: loginJson });
+    const accessToken = loginJson.token || loginJson.access_token;
+    if (!accessToken) return res.status(500).json({ error: "No access token" });
 
-    const { token } = await response.json();
-    console.log("[create-payment-intent] Auth token received");
-
-    const paymentIntentResponse = await fetch("https://api-demo.airwallex.com/api/v1/pa/payment_intents/create", {
+    const piResp = await fetch("https://api-demo.airwallex.com/api/v1/pa/payment_intents/create", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${token}`,
+        "Authorization": `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -30,18 +29,18 @@ export default async function handler(req, res) {
         amount,
         currency,
         customer_id,
+        order: { items: [{ name: "Item", quantity: 1, amount }] },
       }),
     });
-
-    const data = await paymentIntentResponse.json();
-    console.log("[create-payment-intent] Response from Airwallex:", data);
+    const piJson = await piResp.json();
+    if (!piResp.ok) return res.status(piResp.status).json({ error: "Create payment intent failed", details: piJson });
 
     return res.status(200).json({
-      intent_id: data.id,
-      client_secret: data.client_secret,
+      intent_id: piJson.id,
+      client_secret: piJson.client_secret,
     });
   } catch (err) {
-    console.error("[create-payment-intent] Error:", err);
-    return res.status(500).json({ error: "Internal server error" });
+    console.error("create-payment-intent error:", err);
+    return res.status(500).json({ error: "Internal server error", message: err.message });
   }
 }
