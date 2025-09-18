@@ -3,8 +3,11 @@ export default async function handler(req, res) {
 
   try {
     const { amount, currency, customer_id } = req.body;
-    if (!amount || !currency || !customer_id) return res.status(400).json({ error: "amount, currency, and customer_id are required" });
+    if (!amount || !currency || !customer_id) {
+      return res.status(400).json({ error: "amount, currency, and customer_id are required" });
+    }
 
+    // 1. Authenticate
     const loginResp = await fetch("https://api-demo.airwallex.com/api/v1/authentication/login", {
       method: "POST",
       headers: {
@@ -14,10 +17,14 @@ export default async function handler(req, res) {
       },
     });
     const loginJson = await loginResp.json();
-    if (!loginResp.ok) return res.status(loginResp.status).json({ error: "Authentication failed", details: loginJson });
+    if (!loginResp.ok) {
+      return res.status(loginResp.status).json({ error: "Authentication failed", details: loginJson });
+    }
+
     const accessToken = loginJson.token || loginJson.access_token;
     if (!accessToken) return res.status(500).json({ error: "No access token" });
 
+    // 2. Create Payment Intent
     const piResp = await fetch("https://api-demo.airwallex.com/api/v1/pa/payment_intents/create", {
       method: "POST",
       headers: {
@@ -26,14 +33,26 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         request_id: `req_${Date.now()}`,
+        merchant_order_id: `order_${Date.now()}`, // 🔑 required by Airwallex
         amount,
         currency,
         customer_id,
-        order: { items: [{ name: "Item", quantity: 1, amount }] },
+        order: {
+          items: [
+            {
+              name: "Demo Item",
+              quantity: 1,
+              amount,
+            },
+          ],
+        },
       }),
     });
+
     const piJson = await piResp.json();
-    if (!piResp.ok) return res.status(piResp.status).json({ error: "Create payment intent failed", details: piJson });
+    if (!piResp.ok) {
+      return res.status(piResp.status).json({ error: "Create payment intent failed", details: piJson });
+    }
 
     return res.status(200).json({
       intent_id: piJson.id,
